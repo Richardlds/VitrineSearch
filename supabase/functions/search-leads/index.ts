@@ -121,7 +121,7 @@ serve(async (req) => {
       nome_empresa: place.title,
       telefone: place.phoneNumber || null,
       endereco: place.address || null,
-      website: place.website || null,
+      website: place.website || place.link || place.url || null,
       rating: place.rating || null,
       fonte_captacao: 'Google Maps (Serper.dev)',
       keyword_buscada: keyword,

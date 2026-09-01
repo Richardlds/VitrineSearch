@@ -1,12 +1,16 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Search, MapPin, Filter, Download, Phone, Globe, MapPinned, ExternalLink, CheckCircle2, History, Star, MessageSquare, Map, LayoutList, ChevronLeft, ChevronRight, Activity, Handshake, ThumbsDown, Megaphone, Target, Wand2, X, Send, Brain, Save, AlignLeft } from 'lucide-react';
+import { Search, MapPin, Filter, Download, Phone, Globe, MapPinned, ExternalLink, CheckCircle2, History, Star, MessageSquare, Map, LayoutList, ChevronLeft, ChevronRight, Activity, Handshake, ThumbsDown, Megaphone, Target, Wand2, X, Send, Brain, Save, AlignLeft, Clock, Calendar, Ban } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 const STATUS_CONFIG = {
   'Novo': { label: 'Novo', color: 'bg-slate-800 text-slate-300 border-slate-700', icon: Target },
   'Contactado': { label: 'Contactado', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20', icon: MessageSquare },
+  'Sem Resposta': { label: 'Sem Resposta', color: 'bg-slate-500/10 text-slate-400 border-slate-500/20', icon: Clock },
+  'Agendado': { label: 'Reunião Agendada', color: 'bg-purple-500/10 text-purple-400 border-purple-500/20', icon: Calendar },
   'Em Negociação': { label: 'Em Negociação', color: 'bg-amber-500/10 text-amber-400 border-amber-500/20', icon: Activity },
   'Ganho': { label: 'Fechado / Ganho', color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20', icon: Handshake },
+  'Ja Possui Site': { label: 'Já Possui Site', color: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20', icon: Globe },
+  'Desqualificado': { label: 'Fora de Perfil', color: 'bg-orange-500/10 text-orange-400 border-orange-500/20', icon: Ban },
   'Perdido': { label: 'Perdido', color: 'bg-red-500/10 text-red-400 border-red-500/20', icon: ThumbsDown },
 };
 
@@ -207,6 +211,7 @@ function App() {
   const [filterPhone, setFilterPhone] = useState(false);
   const [filterHighPotential, setFilterHighPotential] = useState(false);
   const [minRating, setMinRating] = useState(0);
+  const [crmStatusFilter, setCrmStatusFilter] = useState('Todos');
 
   // Modal State
   const [selectedLeadForMessage, setSelectedLeadForMessage] = useState(null);
@@ -217,6 +222,9 @@ function App() {
   const [aiKnowledgeBase, setAiKnowledgeBase] = useState('');
   const [saveStatus, setSaveStatus] = useState(''); // '' | 'saving' | 'saved'
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+
+  // API Usage State
+  const [apiUsage, setApiUsage] = useState({ used: 0, total: 2500 });
 
   // Carregar do Banco de Dados
   useEffect(() => {
@@ -272,6 +280,40 @@ function App() {
     }
   };
 
+  const loadApiUsage = async () => {
+    try {
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+
+      const { count, error } = await supabase
+        .from('search_history')
+        .select('*', { count: 'exact', head: true })
+        .gte('last_searched_at', startOfMonth.toISOString());
+        
+      if (!error && count !== null) {
+        const dbUsed = count * 3;
+        const offset = parseInt(localStorage.getItem('api_usage_offset') || '0', 10);
+        setApiUsage({ used: dbUsed + offset, total: 2500, dbUsed });
+      }
+    } catch (e) {
+      console.error("Erro ao carregar uso da API", e);
+    }
+  };
+
+  const calibrateApiUsage = () => {
+    const currentBalanceStr = prompt("Qual é o saldo restante exato que aparece no seu painel do Serper.dev?", (apiUsage.total - apiUsage.used).toString());
+    if (currentBalanceStr !== null) {
+      const currentBalance = parseInt(currentBalanceStr.replace(/\D/g, ''), 10);
+      if (!isNaN(currentBalance)) {
+        const realUsed = 2500 - currentBalance;
+        const newOffset = realUsed - (apiUsage.dbUsed || 0);
+        localStorage.setItem('api_usage_offset', newOffset.toString());
+        setApiUsage(prev => ({ ...prev, used: realUsed }));
+      }
+    }
+  };
+
   const loadSavedLeads = useCallback(async (page = 0) => {
     setLoadingHistory(true);
     try {
@@ -280,7 +322,11 @@ function App() {
       if (activeTab === 'history') {
         query = query.eq('status', 'Novo');
       } else if (activeTab === 'crm') {
-        query = query.neq('status', 'Novo');
+        if (crmStatusFilter === 'Todos') {
+          query = query.neq('status', 'Novo');
+        } else {
+          query = query.eq('status', crmStatusFilter);
+        }
       }
 
       if (debouncedHistorySearch) {
@@ -309,10 +355,11 @@ function App() {
     } finally {
       setLoadingHistory(false);
     }
-  }, [debouncedHistorySearch, websiteFilter, filterPhone, filterHighPotential, minRating, activeTab]);
+  }, [debouncedHistorySearch, websiteFilter, filterPhone, filterHighPotential, minRating, activeTab, crmStatusFilter]);
 
   useEffect(() => {
     loadRecentSearches();
+    loadApiUsage();
   }, []);
 
   useEffect(() => {
@@ -325,7 +372,7 @@ function App() {
     if (activeTab === 'history' || activeTab === 'crm') {
       setHistoryPage(0);
     }
-  }, [debouncedHistorySearch, websiteFilter, filterPhone, filterHighPotential, minRating, activeTab]);
+  }, [debouncedHistorySearch, websiteFilter, filterPhone, filterHighPotential, minRating, activeTab, crmStatusFilter]);
 
   const handleSearch = async (e, forceKeyword = keyword, forceLocation = location) => {
     if (e) e.preventDefault();
@@ -347,6 +394,7 @@ function App() {
       if (data && data.leads) {
         setLeads(data.leads);
         loadRecentSearches();
+        loadApiUsage();
       }
     } catch (error) {
       console.error('Erro na busca:', error);
@@ -536,13 +584,52 @@ function App() {
           <>
             {/* Sidebar / Form */}
             <aside className="w-full lg:w-80 flex-shrink-0 space-y-6">
-          <div className="card border-slate-700/60 bg-surface/80 backdrop-blur-sm">
-            <h2 className="text-lg font-semibold mb-6 flex items-center gap-2 text-white">
-              <Filter className="w-5 h-5 text-primary" />
-              Critérios de Captação
-            </h2>
-            
-            <form className="space-y-5" onSubmit={handleSearch}>
+              
+              {/* API Usage Card */}
+              <div className="card border-slate-700/60 bg-surface/80 backdrop-blur-sm p-5">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-primary" />
+                    Uso da API (Serper)
+                  </h3>
+                  <span className="text-xs font-medium text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full">
+                    Mensal
+                  </span>
+                </div>
+                
+                <div className="mt-4">
+                  <div className="flex justify-between items-center text-xs font-medium text-slate-400 mb-1.5">
+                    <span 
+                      className="cursor-pointer hover:text-white transition-colors flex items-center gap-1 border-b border-dashed border-slate-500 pb-0.5" 
+                      onClick={calibrateApiUsage}
+                      title="Clique para sincronizar com o Serper.dev"
+                    >
+                      {apiUsage.total - apiUsage.used} restantes ✏️
+                    </span>
+                    <span>{apiUsage.total} max</span>
+                  </div>
+                  <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden border border-slate-700/50">
+                    <div 
+                      className={`h-2.5 rounded-full transition-all duration-500 ${
+                        apiUsage.used / apiUsage.total > 0.9 ? 'bg-red-500' :
+                        apiUsage.used / apiUsage.total > 0.7 ? 'bg-amber-400' : 'bg-primary'
+                      }`}
+                      style={{ width: `${Math.min((apiUsage.used / apiUsage.total) * 100, 100)}%` }}
+                    ></div>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-2 text-center">
+                    Estimativa baseada no seu histórico do mês.
+                  </p>
+                </div>
+              </div>
+
+              <div className="card border-slate-700/60 bg-surface/80 backdrop-blur-sm">
+                <h2 className="text-lg font-semibold mb-6 flex items-center gap-2 text-white">
+                  <Filter className="w-5 h-5 text-primary" />
+                  Critérios de Captação
+                </h2>
+                
+                <form className="space-y-5" onSubmit={handleSearch}>
               
               <div className={activeTab !== 'search' ? 'hidden lg:block' : 'block'}>
                 <div className="mb-5">
@@ -575,6 +662,22 @@ function App() {
                 <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                   Filtros (Aplicam em todas as telas)
                 </span>
+
+                {activeTab === 'crm' && (
+                  <div className="flex flex-col gap-1.5 mb-4">
+                    <label className="text-sm font-semibold text-primary">Filtrar por Status (CRM)</label>
+                    <select 
+                      className="input-field text-sm bg-slate-800 border-primary/50 focus:ring-1 focus:ring-primary cursor-pointer text-white font-medium"
+                      value={crmStatusFilter}
+                      onChange={(e) => setCrmStatusFilter(e.target.value)}
+                    >
+                      <option value="Todos">Mostrar Todos</option>
+                      {Object.keys(STATUS_CONFIG).filter(s => s !== 'Novo').map(status => (
+                        <option key={status} value={status}>{STATUS_CONFIG[status].label}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm text-slate-300">Presença Digital (Site)</label>
